@@ -26,7 +26,7 @@
   </style>
 </head>
 <body>
-  <div id="ui"><div id="hint">Click para entrar • Flechas para moverse • Esc para soltar</div></div>
+  <div id="ui"><div id="hint">Click para entrar • WASD/Flechas para moverse • Espacio/Shift para subir/bajar • Esc para soltar</div></div>
 
   <script type="module">
     import * as THREE from "three";
@@ -170,7 +170,7 @@
       group.add(textMesh);
     });
 
-    // Movimiento libre (WASD + Space/Shift)
+    // Movimiento libre (WASD + Flechas + Space/Shift)
     const keys = new Set();
     addEventListener('keydown', e=> keys.add(e.code));
     addEventListener('keyup',   e=> keys.delete(e.code));
@@ -185,21 +185,34 @@
         const direction = new THREE.Vector3();
         const forward = new THREE.Vector3(0, 0, -1);
         const right = new THREE.Vector3(1, 0, 0);
+        const up = new THREE.Vector3(0, 1, 0);
         forward.applyQuaternion(moveObject.quaternion);
         right.applyQuaternion(moveObject.quaternion);
         
         const speed = 10;
-        if (keys.has('ArrowUp')) {
+        // Movimiento hacia adelante (W o Flecha Arriba)
+        if (keys.has('KeyW') || keys.has('ArrowUp')) {
           direction.add(forward);
         }
-        if (keys.has('ArrowDown')) {
+        // Movimiento hacia atrás (S o Flecha Abajo)
+        if (keys.has('KeyS') || keys.has('ArrowDown')) {
           direction.addScaledVector(forward, -1);
         }
-        if (keys.has('ArrowLeft')) {
+        // Movimiento hacia la izquierda (A o Flecha Izquierda)
+        if (keys.has('KeyA') || keys.has('ArrowLeft')) {
           direction.addScaledVector(right, -1);
         }
-        if (keys.has('ArrowRight')) {
+        // Movimiento hacia la derecha (D o Flecha Derecha)
+        if (keys.has('KeyD') || keys.has('ArrowRight')) {
           direction.add(right);
+        }
+        // Movimiento hacia arriba (Space)
+        if (keys.has('Space')) {
+          direction.add(up);
+        }
+        // Movimiento hacia abajo (Shift o Control)
+        if (keys.has('ShiftLeft') || keys.has('ShiftRight') || keys.has('ControlLeft') || keys.has('ControlRight')) {
+          direction.addScaledVector(up, -1);
         }
         
         if (direction.lengthSq() > 0) {
