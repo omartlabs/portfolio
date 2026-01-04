@@ -121,14 +121,17 @@
 
     const rnd = (a,b)=> a + Math.random()*(b-a);
     const floaters = [];
-    const sphereMat = new THREE.MeshStandardMaterial({ color: 0x66ccff, metalness:0.4, roughness:0.2, emissive:0x001122, emissiveIntensity:0.3 });
-    const boxMat    = new THREE.MeshStandardMaterial({ color: 0xffbb55, metalness:0.2, roughness:0.6, emissive:0x221100, emissiveIntensity:0.2 });
+    const structures = []; // Almacenar información de estructuras
+    const sphereMat = new THREE.MeshStandardMaterial({ color: 0x66ccff, metalness:0.4, roughness:0.2, emissive:0x001122, emissiveIntensity:0.3, transparent:true });
+    const boxMat    = new THREE.MeshStandardMaterial({ color: 0xffbb55, metalness:0.2, roughness:0.6, emissive:0x221100, emissiveIntensity:0.2, transparent:true });
 
     for (let i=0;i<40;i++){
       const isSphere = Math.random()>0.5;
-      const geo = isSphere ? new THREE.SphereGeometry(rnd(0.6,2.2), 24, 16)
-                           : new THREE.BoxGeometry(rnd(0.8,2.5), rnd(0.8,2.5), rnd(0.8,2.5));
+      const size = isSphere ? rnd(0.6,2.2) : rnd(0.8,2.5);
+      const geo = isSphere ? new THREE.SphereGeometry(size, 24, 16)
+                           : new THREE.BoxGeometry(size, size, size);
       const mat = isSphere ? sphereMat.clone() : boxMat.clone();
+      mat.opacity = 0.9; // Opacidad inicial
       const hsl = { h: 0, s: 0, l: 0 };
       mat.color.getHSL(hsl);
       hsl.h += Math.random()*0.2-0.1;
@@ -141,6 +144,14 @@
                      rnd(-roomSize/2+5, roomSize/2-5));
       group.add(m);
       floaters.push(m);
+      
+      // Almacenar información de la estructura
+      structures.push({
+        mesh: m,
+        isSphere: isSphere,
+        size: size,
+        originalOpacity: 0.9
+      });
     }
 
     const fontLoader = new FontLoader();
@@ -162,12 +173,29 @@
         metalness: 0.6, 
         roughness: 0.3,
         emissive: 0x001133,
-        emissiveIntensity: 0.4
+        emissiveIntensity: 0.4,
+        transparent: true
       });
+      textMaterial.opacity = 0.9;
       const textMesh = new THREE.Mesh(textGeometry, textMaterial);
       const centerOffset = -0.5 * (textGeometry.boundingBox.max.x - textGeometry.boundingBox.min.x);
       textMesh.position.set(centerOffset, 10, -roomSize/2 + 5);
       group.add(textMesh);
+      
+      // Agregar texto como estructura interactiva
+      const bbox = textGeometry.boundingBox;
+      const textWidth = bbox.max.x - bbox.min.x;
+      const textHeight = bbox.max.y - bbox.min.y;
+      const textDepth = bbox.max.z - bbox.min.z;
+      structures.push({
+        mesh: textMesh,
+        isSphere: false, // Tratarlo como cubo para límites
+        size: Math.max(textWidth, textHeight, textDepth) * 1.2, // Aumentar un poco para mejor entrada
+        sizeX: textWidth,
+        sizeY: textHeight,
+        sizeZ: textDepth,
+        originalOpacity: 0.9
+      });
     });
 
     // Movimiento libre (WASD + Flechas + Space/Shift)
@@ -176,12 +204,92 @@
     addEventListener('keyup',   e=> keys.delete(e.code));
 
     let last = performance.now();
+    let currentStructure = null; // Estructura dentro de la cual estamos
+    
     function tick(now){
       const dt = Math.min(0.05, (now - last)/1000);
       last = now;
 
       if (controls.isLocked) {
         const moveObject = controls.getObject();
+        const cameraPos = moveObject.position;
+        
+        // Detectar proximidad a estructuras
+        let closestStructure = null;
+        let closestDistance = Infinity;
+        const enterThreshold = 3.0; // Distancia para entrar
+        const exitThreshold = 4.0; // Distancia para salir (más grande para evitar flickering)
+        
+        structures.forEach(structure => {
+          const structPos = structure.mesh.position;
+          const distance = cameraPos.distanceTo(structPos);
+          const size = structure.size;
+          
+          // Calcular si estamos dentro de la estructura
+          let isInside = false;
+          if (structure.isSphere) {
+            // Para esfera: distancia al centro < radio
+            isInside = distance < size + 0.5; // +0.5 margen para entrada suave
+          } else {
+            // Para cubo: verificar si estamos dentro del bounding box
+            let boxSizeX = size, boxSizeY = size, boxSizeZ = size;
+            if (structure.sizeX) {
+              boxSizeX = structure.sizeX;
+              boxSizeY = structure.sizeY;
+              boxSizeZ = structure.sizeZ;
+            }
+            const dx = Math.abs(cameraPos.x - structPos.x);
+            const dy = Math.abs(cameraPos.y - structPos.y);
+            const dz = Math.abs(cameraPos.z - structPos.z);
+            isInside = dx < boxSizeX/2 + 0.5 && dy < boxSizeY/2 + 0.5 && dz < boxSizeZ/2 + 0.5;
+          }
+          
+          // Ajustar transparencia basada en distancia
+          const proximityFactor = Math.max(0, Math.min(1, (distance - size) / enterThreshold));
+          if (distance < size + enterThreshold) {
+            structure.mesh.material.opacity = 0.3 + 0.6 * proximityFactor; // Más transparente cuando cerca
+          } else {
+            structure.mesh.material.opacity = structure.originalOpacity;
+          }
+          
+          // Detectar estructura más cercana
+          if (isInside && distance < closestDistance) {
+            closestDistance = distance;
+            closestStructure = structure;
+          }
+        });
+        
+        // Actualizar estructura actual
+        if (closestStructure && (!currentStructure || closestStructure !== currentStructure)) {
+          currentStructure = closestStructure;
+        } else if (!closestStructure && currentStructure) {
+          // Verificar si todavía estamos dentro de la estructura actual
+          const structPos = currentStructure.mesh.position;
+          const distance = cameraPos.distanceTo(structPos);
+          let stillInside = false;
+          
+          if (currentStructure.isSphere) {
+            stillInside = distance < currentStructure.size + exitThreshold;
+          } else {
+            let boxSizeX = currentStructure.size;
+            let boxSizeY = currentStructure.size;
+            let boxSizeZ = currentStructure.size;
+            if (currentStructure.sizeX) {
+              boxSizeX = currentStructure.sizeX;
+              boxSizeY = currentStructure.sizeY;
+              boxSizeZ = currentStructure.sizeZ;
+            }
+            const dx = Math.abs(cameraPos.x - structPos.x);
+            const dy = Math.abs(cameraPos.y - structPos.y);
+            const dz = Math.abs(cameraPos.z - structPos.z);
+            stillInside = dx < boxSizeX/2 + exitThreshold && dy < boxSizeY/2 + exitThreshold && dz < boxSizeZ/2 + exitThreshold;
+          }
+          
+          if (!stillInside) {
+            currentStructure = null;
+          }
+        }
+        
         const direction = new THREE.Vector3();
         const forward = new THREE.Vector3(0, 0, -1);
         const right = new THREE.Vector3(1, 0, 0);
@@ -219,10 +327,44 @@
           direction.normalize().multiplyScalar(speed * dt);
           moveObject.position.add(direction);
           const p = moveObject.position;
-          const half = roomSize/2 - 2;
-          p.x = THREE.MathUtils.clamp(p.x, -half, half);
-          p.y = THREE.MathUtils.clamp(p.y, -half, half);
-          p.z = THREE.MathUtils.clamp(p.z, -half, half);
+          
+          // Límites dinámicos: si estamos dentro de una estructura, usar sus límites
+          if (currentStructure) {
+            const structPos = currentStructure.mesh.position;
+            const structSize = currentStructure.size;
+            const margin = 0.3; // Margen para evitar salir accidentalmente
+            
+            if (currentStructure.isSphere) {
+              // Límites esféricos: mantener dentro del radio
+              const distFromCenter = p.distanceTo(structPos);
+              if (distFromCenter > structSize - margin) {
+                const directionOut = new THREE.Vector3().subVectors(p, structPos).normalize();
+                p.copy(structPos).add(directionOut.multiplyScalar(structSize - margin));
+              }
+            } else {
+              // Límites de cubo: mantener dentro del bounding box
+              let halfX = structSize / 2 - margin;
+              let halfY = structSize / 2 - margin;
+              let halfZ = structSize / 2 - margin;
+              
+              // Usar tamaños específicos si están disponibles (para texto)
+              if (currentStructure.sizeX) {
+                halfX = currentStructure.sizeX / 2 - margin;
+                halfY = currentStructure.sizeY / 2 - margin;
+                halfZ = currentStructure.sizeZ / 2 - margin;
+              }
+              
+              p.x = THREE.MathUtils.clamp(p.x, structPos.x - halfX, structPos.x + halfX);
+              p.y = THREE.MathUtils.clamp(p.y, structPos.y - halfY, structPos.y + halfY);
+              p.z = THREE.MathUtils.clamp(p.z, structPos.z - halfZ, structPos.z + halfZ);
+            }
+          } else {
+            // Límites normales del cuarto
+            const half = roomSize/2 - 2;
+            p.x = THREE.MathUtils.clamp(p.x, -half, half);
+            p.y = THREE.MathUtils.clamp(p.y, -half, half);
+            p.z = THREE.MathUtils.clamp(p.z, -half, half);
+          }
         }
       }
 
